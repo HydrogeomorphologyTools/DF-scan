@@ -3216,6 +3216,59 @@ def process_single_point_worker(point_info, dtm, dtm_mask, fdir_deg, fdir_mask, 
 
 
 
+def new_combined_arrays(shape, nodata_f=-9999.0, nodata_i=32767):
+    """Empty accumulator for the standard MSF results of many sources."""
+    return {
+        'pq_lim': np.full(shape, nodata_f, dtype=np.float32),
+        'pq_lim_pruned': np.full(shape, nodata_f, dtype=np.float32),
+        'li': np.full(shape, nodata_f, dtype=np.float32),
+        'backlink_li': np.full(shape, nodata_i, dtype=np.int16),
+        'fri': np.full(shape, nodata_f, dtype=np.float32),
+        'backlink_fri': np.full(shape, nodata_i, dtype=np.int16),
+        'h_l': np.full(shape, nodata_f, dtype=np.float32),
+    }
+
+
+def merge_source_result(combined, result, nodata_f=-9999.0):
+    """
+    Fold the result of one source (or one batch) into the running accumulator, in place.
+
+    PQ_LIM (and the pruned PQ_LIM) are the cell-wise MAXIMUM over sources. LI, FRI, H/L and the
+    two backlink rasters are taken from the source that gives the maximum PQ_LIM in that cell, so
+    that they stay mutually consistent. Cells that are reached by LI/FRI but belong to no PQ_LIM
+    zone are filled by the first source that reaches them.
+
+    NOTE: the "better" mask must be computed BEFORE the combined PQ_LIM is updated; computing it
+    afterwards makes "new > combined" always false (this was the bug of the former merge code).
+    """
+    pq_new = result['pq_lim']
+    pq_old = combined['pq_lim']
+    valid_new = (pq_new != nodata_f) & (pq_new > 0)
+    valid_old = (pq_old != nodata_f) & (pq_old > 0)
+    better = valid_new & (~valid_old | (pq_new > pq_old))
+
+    for key, backlink_key in (('li', 'backlink_li'), ('fri', 'backlink_fri'), ('h_l', None)):
+        new = result[key]
+        old = combined[key]
+        ok_new = (new != nodata_f) & (new >= 0)
+        ok_old = (old != nodata_f) & (old >= 0)
+        upd = ok_new & (~ok_old | better)
+        old[upd] = new[upd]
+        if backlink_key is not None:
+            combined[backlink_key][upd] = result[backlink_key][upd]
+
+    pq_old[better] = pq_new[better]
+
+    pp_new = result.get('pq_lim_pruned')
+    if pp_new is not None:
+        pp_old = combined['pq_lim_pruned']
+        v_new = (pp_new != nodata_f) & (pp_new > 0)
+        v_old = (pp_old != nodata_f) & (pp_old > 0)
+        pb = v_new & (~v_old | (pp_new > pp_old))
+        pp_old[pb] = pp_new[pb]
+    return combined
+
+
 def process_sources_parallel(src_pix_all, dtm, dtm_mask, fdir_deg, fdir_mask, cellsize, cfg, ref_profile=None, fdir_matrix=None):
     """
     Process all source points using parallel workers.
@@ -3404,13 +3457,7 @@ def process_sources_parallel(src_pix_all, dtm, dtm_mask, fdir_deg, fdir_mask, ce
         }
     else:
         # Standard MSF parallel aggregation
-        combined_pq_lim = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_pq_lim_pruned = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_li = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_backlink_li = np.full(dtm.shape, nodata_i, dtype=np.int16)
-        combined_fri = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_backlink_fri = np.full(dtm.shape, nodata_i, dtype=np.int16)
-        combined_hl = np.full(dtm.shape, nodata_f, dtype=np.float32)
+        combined = new_combined_arrays(dtm.shape, nodata_f, nodata_i)
 
         with mp.Pool(processes=cfg.NUM_WORKERS, **pool_kwargs) as pool:
             results_iter = pool.imap(worker_func, points_info)
@@ -3422,58 +3469,15 @@ def process_sources_parallel(src_pix_all, dtm, dtm_mask, fdir_deg, fdir_mask, ce
                     sys.stdout.flush()
                     sys.stderr.flush()
 
-                # PQ_LIM standard
-                valid_new = (result['pq_lim'] != nodata_f) & (result['pq_lim'] > 0)
-                valid_existing = (combined_pq_lim != nodata_f) & (combined_pq_lim > 0)
-                both_valid = valid_new & valid_existing
-                combined_pq_lim[both_valid] = np.maximum(combined_pq_lim[both_valid], result['pq_lim'][both_valid])
-                only_new = valid_new & ~valid_existing
-                combined_pq_lim[only_new] = result['pq_lim'][only_new]
-
-                # PQ_LIM pruned
-                pq_lim_p = result.get('pq_lim_pruned', np.full(dtm.shape, nodata_f, dtype=np.float32))
-                valid_new_p = (pq_lim_p != nodata_f) & (pq_lim_p > 0)
-                valid_existing_p = (combined_pq_lim_pruned != nodata_f) & (combined_pq_lim_pruned > 0)
-                both_valid_p = valid_new_p & valid_existing_p
-                combined_pq_lim_pruned[both_valid_p] = np.maximum(combined_pq_lim_pruned[both_valid_p], pq_lim_p[both_valid_p])
-                only_new_p = valid_new_p & ~valid_existing_p
-                combined_pq_lim_pruned[only_new_p] = pq_lim_p[only_new_p]
-
-                # LI
-                valid_new = (result['li'] != nodata_f) & (result['li'] >= 0)
-                valid_existing = (combined_li != nodata_f) & (combined_li >= 0)
-                mask_update = valid_new & (~valid_existing | (result['pq_lim'] > combined_pq_lim))
-                combined_li[mask_update] = result['li'][mask_update]
-                combined_backlink_li[mask_update] = result['backlink_li'][mask_update]
-
-                # FRI
-                valid_new = (result['fri'] != nodata_f) & (result['fri'] >= 0)
-                valid_existing = (combined_fri != nodata_f) & (combined_fri >= 0)
-                mask_update = valid_new & (~valid_existing | (result['pq_lim'] > combined_pq_lim))
-                combined_fri[mask_update] = result['fri'][mask_update]
-                combined_backlink_fri[mask_update] = result['backlink_fri'][mask_update]
-
-                # HL
-                valid_new = (result['h_l'] != nodata_f) & (result['h_l'] >= 0)
-                valid_existing = (combined_hl != nodata_f) & (combined_hl >= 0)
-                mask_update = valid_new & (~valid_existing | (result['pq_lim'] > combined_pq_lim))
-                combined_hl[mask_update] = result['h_l'][mask_update]
+                merge_source_result(combined, result, nodata_f)
 
         print(f"  ✓ Parallel processing completed")
-        valid_pqlim = ((combined_pq_lim != nodata_f) & (combined_pq_lim > 0)).sum()
+        valid_pqlim = ((combined['pq_lim'] != nodata_f) & (combined['pq_lim'] > 0)).sum()
         print(f"    Final cells with PQ_LIM: {valid_pqlim:,}")
 
-        return {
-            'pq_lim': combined_pq_lim,
-            'pq_lim_pruned': combined_pq_lim_pruned,
-            'li': combined_li,
-            'backlink_li': combined_backlink_li,
-            'fri': combined_fri,
-            'backlink_fri': combined_backlink_fri,
-            'h_l': combined_hl,
-            'nodata_float': nodata_f,
-            'nodata_int': nodata_i
-        }
+        combined['nodata_float'] = nodata_f
+        combined['nodata_int'] = nodata_i
+        return combined
 
 
 # =========================================================================
@@ -3607,80 +3611,23 @@ def process_source_batch(batch_indices, dtm, dtm_mask, fdir_deg, fdir_mask,
         }
 
     else:
-        # Initialize combined rasters with nodata
-        combined_pq_lim = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_pq_lim_pruned = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_li = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_backlink_li = np.full(dtm.shape, nodata_i, dtype=np.int16)
-        combined_fri = np.full(dtm.shape, nodata_f, dtype=np.float32)
-        combined_backlink_fri = np.full(dtm.shape, nodata_i, dtype=np.int16)
-        combined_hl = np.full(dtm.shape, nodata_f, dtype=np.float32)
+        # Process each source INDIVIDUALLY and fold it into the running result
+        combined = new_combined_arrays(dtm.shape, nodata_f, nodata_i)
 
-        # Process each source point INDIVIDUALLY
         for point_idx, (sr, sc) in enumerate(batch_indices):
             if (point_idx + 1) % 10 == 0 or point_idx == len(batch_indices) - 1:
                 print(f"      Point {point_idx + 1}/{len(batch_indices)}")
                 sys.stdout.flush()
                 sys.stderr.flush()
 
-            # Process this SINGLE point
             result = process_single_source_point(
                 sr, sc, dtm, dtm_mask, fdir_deg, fdir_mask, cellsize, cfg, fdir=fdir_matrix
             )
+            merge_source_result(combined, result, nodata_f)
 
-            # Combine standard PQ_LIM with MAX
-            valid_new = (result['pq_lim'] != nodata_f) & (result['pq_lim'] > 0)
-            valid_existing = (combined_pq_lim != nodata_f) & (combined_pq_lim > 0)
-            both_valid = valid_new & valid_existing
-            combined_pq_lim[both_valid] = np.maximum(combined_pq_lim[both_valid], result['pq_lim'][both_valid])
-            only_new = valid_new & ~valid_existing
-            combined_pq_lim[only_new] = result['pq_lim'][only_new]
-
-            # Combine pruned PQ_LIM with MAX
-            pq_lim_p = result.get('pq_lim_pruned', np.full(dtm.shape, nodata_f, dtype=np.float32))
-            valid_new_p = (pq_lim_p != nodata_f) & (pq_lim_p > 0)
-            valid_existing_p = (combined_pq_lim_pruned != nodata_f) & (combined_pq_lim_pruned > 0)
-            both_valid_p = valid_new_p & valid_existing_p
-            combined_pq_lim_pruned[both_valid_p] = np.maximum(combined_pq_lim_pruned[both_valid_p], pq_lim_p[both_valid_p])
-            only_new_p = valid_new_p & ~valid_existing_p
-            combined_pq_lim_pruned[only_new_p] = pq_lim_p[only_new_p]
-
-            valid_new = (result['li'] != nodata_f) & (result['li'] > 0)
-            valid_existing = (combined_li != nodata_f) & (combined_li > 0)
-            both_valid = valid_new & valid_existing
-            combined_li[both_valid] = np.maximum(combined_li[both_valid], result['li'][both_valid])
-            only_new = valid_new & ~valid_existing
-            combined_li[only_new] = result['li'][only_new]
-
-            valid_new = (result['fri'] != nodata_f) & (result['fri'] > 0)
-            valid_existing = (combined_fri != nodata_f) & (combined_fri > 0)
-            both_valid = valid_new & valid_existing
-            combined_fri[both_valid] = np.maximum(combined_fri[both_valid], result['fri'][both_valid])
-            only_new = valid_new & ~valid_existing
-            combined_fri[only_new] = result['fri'][only_new]
-
-            mask_update_li = (result['pq_lim'] > combined_pq_lim)
-            combined_backlink_li[mask_update_li] = result['backlink_li'][mask_update_li]
-
-            valid_new = (result['h_l'] != nodata_f) & (result['h_l'] >= 0)
-            valid_existing = (combined_hl != nodata_f) & (combined_hl >= 0)
-            mask_update = valid_new & (~valid_existing | (result['pq_lim'] > combined_pq_lim))
-            combined_hl[mask_update] = result['h_l'][mask_update]
-
-            mask_update_fri = (result['fri'] > combined_fri)
-            combined_backlink_fri[mask_update_fri] = result['backlink_fri'][mask_update_fri]
-
-        return {
-            'pq_lim': combined_pq_lim,
-            'pq_lim_pruned': combined_pq_lim_pruned,
-            'li': combined_li,
-            'backlink_li': combined_backlink_li,
-            'fri': combined_fri,
-            'backlink_fri': combined_backlink_fri,
-            'h_l': combined_hl,
-            'nodata_float': nodata_f,
-            'nodata_int': nodata_i
-        }
+        combined['nodata_float'] = nodata_f
+        combined['nodata_int'] = nodata_i
+        return combined
 
 
 def combine_rasters_max(raster_arrays, nodata):
@@ -3749,60 +3696,26 @@ def combine_batch_results(batch_results, nodata_float, nodata_int):
             'nodata_int': nodata_int
         }
     else:
-        print(f"\n  Combining {len(batch_results)} batch results (using MAX)...")
+        print(f"\n  Combining {len(batch_results)} batch results (max PQ_LIM, consistent LI/FRI/H/L/backlinks)...")
         sys.stdout.flush()
         sys.stderr.flush()
 
-        pq_lim_arrays = [r['pq_lim'] for r in batch_results]
-        li_arrays = [r['li'] for r in batch_results]
-        backlink_li_arrays = [r['backlink_li'] for r in batch_results]
-        fri_arrays = [r['fri'] for r in batch_results]
-        backlink_fri_arrays = [r['backlink_fri'] for r in batch_results]
-        hl_arrays = [r['h_l'] for r in batch_results]
+        combined = new_combined_arrays(batch_results[0]['pq_lim'].shape, nodata_float, nodata_int)
+        for r in batch_results:
+            merge_source_result(combined, r, nodata_float)
 
-        print(f"    Combining PQ_LIM arrays...")
-        pq_lim_final = combine_rasters_max(pq_lim_arrays, nodata_float)
-        valid_pqlim = ((pq_lim_final != nodata_float) & (pq_lim_final > 0)).sum()
-        print(f"    ✓ PQ_LIM combined: {valid_pqlim:,} valid cells")
+        for name, key in (('PQ_LIM', 'pq_lim'), ('PQ_LIM pruned', 'pq_lim_pruned'), ('LI', 'li'), ('FRI', 'fri')):
+            n_valid = ((combined[key] != nodata_float) & (combined[key] > 0)).sum()
+            print(f"    ✓ {name} combined: {n_valid:,} valid cells")
+        print(f"    ✓ Backlink LI: {(combined['backlink_li'] != nodata_int).sum():,} valid cells")
+        print(f"    ✓ Backlink FRI: {(combined['backlink_fri'] != nodata_int).sum():,} valid cells")
 
-        print(f"    Combining LI arrays...")
-        li_final = combine_rasters_max(li_arrays, nodata_float)
-        valid_li = ((li_final != nodata_float) & (li_final > 0)).sum()
-        print(f"    ✓ LI combined: {valid_li:,} valid cells")
+        combined['nodata_float'] = nodata_float
+        combined['nodata_int'] = nodata_int
+        return combined
 
-        print(f"    Combining FRI arrays...")
-        fri_final = combine_rasters_max(fri_arrays, nodata_float)
-        valid_fri = ((fri_final != nodata_float) & (fri_final > 0)).sum()
-        print(f"    ✓ FRI combined: {valid_fri:,} valid cells")
 
-        print(f"    Processing backlink and HL arrays...")
-        backlink_li_final = backlink_li_arrays[0].copy()
-        backlink_fri_final = backlink_fri_arrays[0].copy()
-        hl_final = hl_arrays[0].copy()
-
-        for i in range(1, len(batch_results)):
-            mask_update_li = (pq_lim_arrays[i] > pq_lim_arrays[0])
-            backlink_li_final[mask_update_li] = backlink_li_arrays[i][mask_update_li]
-            hl_final[mask_update_li] = hl_arrays[i][mask_update_li]
-
-            mask_update_fri = (li_arrays[i] > li_arrays[0])
-            backlink_fri_final[mask_update_fri] = backlink_fri_arrays[i][mask_update_fri]
-
-        valid_bl_li = ((backlink_li_final != nodata_int) & (backlink_li_final > -32768)).sum()
-        valid_bl_fri = ((backlink_fri_final != nodata_int) & (backlink_fri_final > -32768)).sum()
-        print(f"    ✓ Backlink LI: {valid_bl_li:,} valid cells")
-        print(f"    ✓ Backlink FRI: {valid_bl_fri:,} valid cells")
-
-        return {
-            'pq_lim': pq_lim_final,
-            'li': li_final,
-            'backlink_li': backlink_li_final,
-            'fri': fri_final,
-            'backlink_fri': backlink_fri_final,
-            'h_l': hl_final,
-            'nodata_float': nodata_float,
-            'nodata_int': nodata_int
-        }
+# =========================================================================
 # MAIN WORKFLOW
 # =========================================================================
 

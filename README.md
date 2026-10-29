@@ -31,6 +31,15 @@ The underlying algorithm is based on the Modified Single Flow model developed an
 
 ---
 
+## 📄 Technical Report
+A detailed technical report (how LI / FRI / PQI, H/L hole filling, the path pruning and runoutSIM work, with figures, a parameter guide and a critical code review) is available in [`docs/DF-scan_Technical_Report.pdf`](docs/DF-scan_Technical_Report.pdf); its figures are in [`docs/report_figures/`](docs/report_figures/).
+
+**Consistency check.** `python tests/check_modes.py` verifies that the sequential and parallel aggregation modes give identical PQ_LIM, pruned PQ_LIM, LI, FRI, H/L and backlink rasters on the bundled Grigna test data.
+
+**Changelog v5.0.1** – fixed the aggregation of per-source results: backlink rasters are no longer empty in sequential mode, the pruned PQ_LIM is now returned in sequential mode, and LI / FRI / H/L / backlinks now come from the source that gives the maximum PQ_LIM in both modes (the main `pq_lim` raster was already correct and is unchanged).
+
+---
+
 ## 🚀 Key Features
 *   **Regional Batch Processing:** Handle thousands of initiation points efficiently using multiprocessing.
 *   **Flexible Inputs:** Supports both Shapefiles (point/polygon) and Raster data for initiation zones.

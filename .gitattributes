@@ -1,0 +1,6 @@
+# Never touch line endings of binary documents/rasters/images
+*.pdf binary
+*.png binary
+*.tif binary
+*.ico binary
+*.exe binary
