@@ -31,3 +31,6 @@ Desktop.ini
 *.mxd
 outputs/
 temp/
+
+# Local archive of previous executables (published on GitHub Releases, too big for git)
+old_releases/
