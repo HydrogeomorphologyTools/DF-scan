@@ -413,20 +413,6 @@ class MSFWindow(QWidget):
         h6.addWidget(self.e_pqlim);
         h6.addWidget(btn_pqlim)
         form.addRow("PQ_LIM Ref:", h6)
-        self.e_outdir = QLineEdit();
-        btn_outdir = QPushButton("…");
-        btn_outdir.setMaximumWidth(40)
-        btn_outdir.clicked.connect(lambda: self._browse_dir(self.e_outdir, "Select Output Directory"))
-        h7 = QHBoxLayout();
-        h7.addWidget(self.e_outdir);
-        h7.addWidget(btn_outdir)
-        form.addRow("Output Directory:", h7)
-
-        # PQ_LIM Filename (moved here from outputs tab)
-        self.e_pqlim_filename = QLineEdit()
-        self.e_pqlim_filename.setPlaceholderText("Default: pq_lim.tif (or with resolution suffix)")
-        form.addRow("PQ_LIM Filename:", self.e_pqlim_filename)
-
         grp.setLayout(form);
         layout.addWidget(grp);
 
@@ -751,11 +737,6 @@ class MSFWindow(QWidget):
         h7.addWidget(self.e_outdir);
         h7.addWidget(btn_outdir)
         form.addRow("Output Directory:", h7)
-
-        # PQ_LIM Filename (moved here from inputs/outputs changes)
-        self.e_pqlim_filename = QLineEdit()
-        self.e_pqlim_filename.setPlaceholderText("Default: pq_lim.tif (or with resolution suffix)")
-        form.addRow("PQ_LIM Filename:", self.e_pqlim_filename)
 
 
         # PQ_LIM filename (always saved)
