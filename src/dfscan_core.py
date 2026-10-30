@@ -343,9 +343,9 @@ class Config:
 
     ENABLE_PARALLEL_PROCESSING = True  # Enable multiprocessing
 
-    NUM_WORKERS = 8  # Number of parallel workers (adjust based on CPU cores)
+    NUM_WORKERS = 2  # Number of parallel workers (adjust based on CPU cores)
 
-    POINTS_PER_WORKER = 4  # Number of source points each worker processes
+    POINTS_PER_WORKER = 10  # Number of source points each worker processes
 
 
 

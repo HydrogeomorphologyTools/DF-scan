@@ -504,11 +504,11 @@ class MSFWindow(QWidget):
         form.addRow("Parallel:", self.btn_parallel)
         self.spn_workers = QSpinBox();
         self.spn_workers.setRange(1, 64);
-        self.spn_workers.setValue(12)
+        self.spn_workers.setValue(2)
         form.addRow("Num Workers:", self.spn_workers)
         self.spn_ppw = QSpinBox();
         self.spn_ppw.setRange(1, 10000);
-        self.spn_ppw.setValue(200)
+        self.spn_ppw.setValue(10)
         form.addRow("Points per Worker:", self.spn_ppw)
         grp.setLayout(form);
         layout.addWidget(grp);
@@ -936,8 +936,8 @@ class MSFWindow(QWidget):
         self.dsp_msf_pruning_threshold.setValue(d.get("MSF_PRUNING_THRESHOLD", 1.5))
         self.dsp_msf_pruning_threshold.setEnabled(self.btn_msf_pruning.isChecked())
         self.btn_parallel.setChecked(d.get("ENABLE_PARALLEL_PROCESSING", False))
-        self.spn_workers.setValue(d.get("NUM_WORKERS", 12))
-        self.spn_ppw.setValue(d.get("POINTS_PER_WORKER", 1))
+        self.spn_workers.setValue(d.get("NUM_WORKERS", 2))
+        self.spn_ppw.setValue(d.get("POINTS_PER_WORKER", 10))
         self.btn_pit.setChecked(d.get("DO_PIT_FILLING", True))
         self.btn_calc_fdir.setChecked(d.get("CALCULATE_FLOW_DIRECTION", True))
         self.spn_maxslope.setValue(d.get("MAX_SLOPE_DEGREES", 30))

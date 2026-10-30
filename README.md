@@ -36,7 +36,9 @@ A detailed technical report (how LI / FRI / PQI, H/L hole filling, the path prun
 
 **Consistency check.** `python tests/check_modes.py` verifies that the sequential and parallel aggregation modes give identical PQ_LIM, pruned PQ_LIM, LI, FRI, H/L and backlink rasters on the bundled Grigna test data.
 
-**Changelog v5.0.1** – fixed the aggregation of per-source results: backlink rasters are no longer empty in sequential mode, the pruned PQ_LIM is now returned in sequential mode, and LI / FRI / H/L / backlinks now come from the source that gives the maximum PQ_LIM in both modes (the main `pq_lim` raster was already correct and is unchanged).
+**Changelog v5.0.2** – GUI: removed the duplicated *Output Directory* and *PQ_LIM Filename* fields from the Inputs tab (the copy in the Outputs tab replaced it, so the selected path was never shown there; they now live only in **Outputs**). Default parallel settings are now **2 workers × 10 points per worker** (raise them on a more powerful PC). The technical report now includes the verification of the aggregation fix on 25 overlapping and 63 real sources.
+
+**Changelog v5.0.1** – fixed the aggregation of per-source results: backlink rasters are no longer empty in sequential mode, the pruned PQ_LIM is now returned in sequential mode, and LI / FRI / H/L / backlinks now come from the source that gives the maximum PQ_LIM in both modes (the main `pq_lim` raster was already correct and is unchanged). The H/L raster of a cell is the H/L of the source that gives the maximum PQ_LIM in that cell (not a min/max of H/L over sources).
 
 ---
 
